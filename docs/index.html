@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Async vs sync RL rollouts on TPU v6e</title>
-<meta name="description" content="GRPO on Qwen3.5-2B: async rollouts are 1.61× faster than sync at matched quality on TPU v6e, with Miles / PyTorch Conf citations."/>
+<meta name="description" content="GRPO on Qwen3.5-2B on TPU v6e: async rollouts are 1.86× faster than sync at 6k tokens (1.61× at 3k) with equivalent quality; a no-IS ablation at lag 2."/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
@@ -329,18 +329,18 @@ tr:last-child td {
 </head>
 <body>
 <nav class="nav" aria-label="Sections"><div class="nav-inner">
-<a href="#tldr">TLDR</a><a href="#setup">Setup</a><a href="#results">Results</a><a href="#related">Related work</a><a href="#caveats">Caveats</a><a href="#refs">References</a>
+<a href="#tldr">TLDR</a><a href="#longer">Longer run</a><a href="#nois">No-IS ablation</a><a href="#setup">First study</a><a href="#results">Results</a><a href="#related">Related work</a><a href="#caveats">Caveats</a><a href="#refs">References</a>
 </div></nav>
 <main class="shell">
 <header>
 <p class="eyebrow">TPU Builders study</p>
 <h1 class="brand">Async vs sync RL rollouts on TPU v6e</h1>
-<p class="lede">A controlled GRPO comparison on Qwen3.5-2B / AIME: overlapping generation and learning with bounded staleness cuts wall-clock by <strong>1.61×</strong> without a measurable quality gap at this scale — the same systems thesis as Miles and PyTorch Conf async-RL talks, measured on TorchTPU + vLLM.</p>
+<p class="lede">A controlled GRPO comparison on Qwen3.5-2B / AIME. Overlapping generation and learning with bounded staleness cuts wall-clock per step by <strong>1.86×</strong> with 6k-token rollouts (<strong>1.61×</strong> at 3k), and quality stays equivalent within ±3 pp. A no-IS ablation shows the importance correction is cheap insurance at lag 2. This is the same systems thesis as the Miles and PyTorch Conf async-RL talks, measured on TorchTPU + vLLM.</p>
 <div class="meta">
 <span class="pill">Qwen3.5-2B · GRPO · AIME</span>
-<span class="pill">Flex-start v6e-4 · asia-northeast1-b</span>
-<span class="pill">40 steps · 2 seeds · k≤2</span>
-<span class="pill">≈ $22 total</span>
+<span class="pill">Longer run: Spot v6e-4 · 3 arms × 2 seeds · 20 steps · 6k cap</span>
+<span class="pill">First study: Flex-start v6e-4 · 40 steps · 3k cap</span>
+<span class="pill">≈ $64 + $22</span>
 </div>
 </header>
 
@@ -348,19 +348,83 @@ tr:last-child td {
 <p class="eyebrow">Summary</p>
 <h2>TLDR</h2>
 <div class="kpis">
-<div class="kpi"><div class="label">Speedup</div><div class="value">1.61×</div><div class="detail">53.0 vs 85.4 min to 40 steps</div></div>
-<div class="kpi"><div class="label">Rollout idle</div><div class="value">1.7%</div><div class="detail">down from 39.5% in sync</div></div>
-<div class="kpi"><div class="label">pass@1 @40</div><div class="value">≈ equal</div><div class="detail">8.96% async vs 9.38% sync</div></div>
-<div class="kpi"><div class="label">Mean staleness</div><div class="value">1.09</div><div class="detail">cap k=2; 89% of steps at 1</div></div>
+<div class="kpi"><div class="label">Speedup (6k cap)</div><div class="value">1.86×</div><div class="detail">193.5 vs 359.6 s/step, same VM</div></div>
+<div class="kpi"><div class="label">async-IS − sync</div><div class="value">+0.9 pp</div><div class="detail">95% CI −1.0 to +2.9; equivalent at ±3 pp</div></div>
+<div class="kpi"><div class="label">no-IS − async-IS</div><div class="value">+0.6 pp</div><div class="detail">CI −2.6 to +4.0; 1 of 2 seeds drifted</div></div>
+<div class="kpi"><div class="label">Speedup (3k cap)</div><div class="value">1.61×</div><div class="detail">first study, 40 steps</div></div>
 </div>
 <div class="callout" style="margin-top:1.2rem">
-<p style="margin-top:0"><strong>Bottom line.</strong> Async keeps the rollout engine busy while the learner trains. Throughput rose from ~2,900 to ~4,700 gen tokens/s. AIME 2024+2025 pass@1 (60 problems × 8 samples, mean of 2 seeds) stayed within noise (async − sync at step 40: −0.4 pp, 95% CI −2.1 to +1.2). Base model was 7.08%. This is a short, weak-signal run: the <em>speed</em> result is solid; “equal quality” means no detectable difference at this scale, not long-horizon equivalence.</p>
+<p style="margin-top:0"><strong>Longer run (6,144-token cap, 3 arms × 2 seeds, 20 steps).</strong> Step-20 pass@1 on 136 problems (AIME 2024–2026, BRUMO 2025, HMMT 2025–2026) × 16 samples, with 95% bootstrap CIs over problems × seeds × samples: sync <strong>11.49%</strong> [7.93, 15.51], async k=2 + IS <strong>12.41%</strong> [8.57, 16.52], async k=2 without IS <strong>12.98%</strong> [8.46, 18.34]. The base model scored 9.47%. In the matched pair on one VM, async took 64.5 min for 20 steps versus 119.9 min for sync. The learner is now the bottleneck: rollout idle fell from 56% to 20–26% and learner idle from 44% to 4–5%.</p>
+<p><strong>Do we need IS?</strong> Not for accuracy at lag 2 over 20 steps. But one of the two no-IS seeds began drifting off-policy from step 11: its sampler-vs-trainer KL grew 27× and its max IS ratio reached 26.6, while both IS seeds stayed flat. The correction is free, so keep it.</p>
+<p style="margin-bottom:0"><strong>First study (3,072-token cap, 40 steps).</strong> 1.61× faster; async − sync at step 40 was −0.4 pp (95% CI −3.9 to +2.9). <strong>Caveats:</strong> both studies are short. In the longer run, 87% of base samples hit the cap in the pilot, there were only 2 seeds per arm, and the Spot VMs were in different regions, so wall-clock is compared only within a VM pair. Spend was $64.08 of a $90 cap.</p>
 </div>
+</section>
+
+<section id="longer">
+<p class="eyebrow">Follow-up</p>
+<h2>Longer run (6k cap, 3 arms × 2 seeds)</h2>
+<p>This run uses the same code as the first study, with 6,144-token answers, a third arm and a harder 136-problem eval. Two v6e-4 <strong>Spot</strong> VMs came out of a multi-region capacity race: europe-west4-a ($7.13/h) and asia-south1-c ($6.25/h). Each VM ran a pair of runs at once, on chips 0/1 and 2/3. The run was 20 steps (the re-price cut it from 60 to fit the $90 cap), with 16 prompts × 8 samples, temperature 1.0, and prompts filtered by a pilot profile. The learner used <span class="mono">--mb-tokens 8192</span>, after 16,384 hit an HBM OOM on the first train step.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Arm</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td>sync</td><td>k=0: generation waits for the latest weights every step</td></tr>
+<tr><td>async k=2 + IS</td><td>Fixed lag 2; learner recomputes log-probs and applies truncated IS against vLLM behaviour log-probs (<span class="mono">w ≤ 2</span>)</td></tr>
+<tr><td>async k=2, no IS</td><td>Fixed lag 2; token trajectories only. Stale samples are treated as on-policy (ratio ≡ 1); sampler log-probs are logged as diagnostics only</td></tr>
+</tbody></table></div>
+<h3>Speed: within-VM pairs</h3>
+<p>Wall-clock is only compared within a pair: two runs at once on one VM, sharing its host. Different pairs ran on different Spot machines and regions.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Pair (VM)</th><th>Comparison</th><th>s/step</th><th>Wall to 20</th><th>Ratio</th></tr></thead>
+<tbody>
+<tr><td>p1 (europe-west4-a)</td><td>sync-s0 vs async-IS-s0</td><td>359.6 vs 193.5</td><td>119.9 vs 64.5 min</td><td><strong>1.86×</strong></td></tr>
+<tr><td>p2 (asia-south1-c)</td><td>sync-s1 vs no-IS-s0</td><td>360.0 vs 196.8</td><td>120.0 vs 65.6 min</td><td><strong>1.83×</strong></td></tr>
+<tr><td>p3 (asia-south1-c)</td><td>async-IS-s1 vs no-IS-s1</td><td>218.2 vs 200.3</td><td>72.7 vs 66.8 min</td><td>1.09×</td></tr>
+</tbody></table></div>
+<p>A sync step pays generate + train + publish (157 + 198 + 5 ≈ 360 s). An async step pays only the slower stage, which is now training (182–207 s). The learner is the bottleneck, so staleness sits at k=2 on 18 of 20 steps. Rollout idle fell from 56% to 20–26%, and learner idle from 44% to 4–5%. Generated tokens/s rose from about 1,900 to about 3,300–3,450. Pooled over all VMs, async-IS is 1.75× faster than sync (95% CI 1.65–1.86). IS adds no compute, so the 9% gap in p3 is run-to-run noise: async-IS-s1 trained 4% more tokens.</p>
+<div class="grid-2">
+<figure class="figure"><img src="charts/p90_speed_idle.png" alt="Seconds per step and idle fractions by VM pair"/><figcaption class="caption">Figure L1. Seconds per step and idle fractions, grouped by VM pair.</figcaption></figure>
+<figure class="figure"><img src="charts/p90_reward_wallclock.png" alt="Train reward vs step and wall-clock"/><figcaption class="caption">Figure L2. Train reward (batch accuracy) vs step and vs wall-clock; wall-clock to N steps.</figcaption></figure>
+</div>
+<h3>Quality: step-20 pass@1</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Arm</th><th>pass@1 (95% CI)</th><th>Seeds</th><th>Gain over base</th></tr></thead>
+<tbody>
+<tr><td>base</td><td>9.47%</td><td>–</td><td>–</td></tr>
+<tr><td>sync</td><td>11.49% [7.93, 15.51]</td><td>11.72%, 11.26%</td><td>+2.0 pp [+0.2, +4.0]</td></tr>
+<tr><td>async k=2 + IS</td><td>12.41% [8.57, 16.52]</td><td>12.96%, 11.86%</td><td>+2.9 pp [+0.7, +5.1]</td></tr>
+<tr><td>async k=2, no IS</td><td>12.98% [8.46, 18.34]</td><td>14.84%, 11.12%</td><td>+3.5 pp [+0.4, +7.2]</td></tr>
+</tbody></table></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Contrast (paired by problem)</th><th>Difference</th><th>95% CI</th><th>90% CI</th><th>Equivalent at ±3 pp?</th></tr></thead>
+<tbody>
+<tr><td>async-IS − sync</td><td>+0.9 pp</td><td>[−1.0, +2.9]</td><td>[−0.7, +2.6]</td><td><strong>yes</strong></td></tr>
+<tr><td>no-IS − async-IS</td><td>+0.6 pp</td><td>[−2.6, +4.0]</td><td>[−2.2, +3.5]</td><td>no (too wide)</td></tr>
+<tr><td>no-IS − sync</td><td>+1.5 pp</td><td>[−1.6, +4.9]</td><td>[−1.2, +4.3]</td><td>no (too wide)</td></tr>
+</tbody></table></div>
+<p class="footnote">CIs come from a hierarchical bootstrap that resamples problems, seeds and samples (10,000 draws). Equivalence uses a two-one-sided test (TOST): the 90% CI must lie inside ±3 pp. About 9 of 16 prompt groups per batch carried gradient, compared with 3.5 in the first study.</p>
+<figure class="figure"><img src="charts/p90_pass1.png" alt="Step-20 pass@1 per arm and paired differences"/><figcaption class="caption">Figure L3. Step-20 pass@1 per arm (dots = seeds) and paired differences with 95% CIs.</figcaption></figure>
+</section>
+
+<section id="nois">
+<p class="eyebrow">Ablation</p>
+<h2>Do we need behaviour logprobs / IS? (no-IS ablation)</h2>
+<p><strong>Accuracy: no detectable cost from dropping IS at lag 2 over 20 steps</strong> (no-IS − async-IS = +0.6 pp, 95% CI −2.6 to +4.0). <strong>Stability: one of the two no-IS seeds started to drift.</strong> The diagnostic below is the KL between the sampling policy (vLLM, 2 versions back) and the current trainer, measured on the sampled tokens.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Run</th><th>KL steps 1–5</th><th>KL steps 16–20</th><th>Max IS ratio</th><th>Grad norm mean (max)</th></tr></thead>
+<tbody>
+<tr><td>sync-s0 / s1</td><td>3.7e-4 / 3.6e-4</td><td>3.6e-4 / 3.6e-4</td><td>2.10 / 9.45</td><td>0.62 / 0.62</td></tr>
+<tr><td>async-IS-s0 / s1</td><td>3.9e-4 / 3.8e-4</td><td>5.2e-4 / 4.3e-4</td><td>3.06 / 2.37</td><td>0.66 / 0.63</td></tr>
+<tr><td>no-IS-s0</td><td>3.9e-4</td><td><strong>7.4e-3</strong> (peak 1.1e-2)</td><td><strong>26.6</strong></td><td>0.77 (1.27)</td></tr>
+<tr><td>no-IS-s1</td><td>3.8e-4</td><td>4.3e-4</td><td>2.54</td><td>0.65</td></tr>
+</tbody></table></div>
+<p>no-IS-s0 tracked the other runs for 10 steps. From step 11 its mismatch rose on almost every step, to 27× its starting level, and its gradient norm passed the 1.0 clip on 3 of the last 5 steps. It also had the highest train reward and the best pass@1 (14.8%), so 20 steps cannot tell faster learning apart from the start of an instability. Both IS-corrected seeds stayed at 3.5–6.2e-4 throughout.</p>
+<div class="callout"><p style="margin:0"><strong>Verdict.</strong> At lag 2, lr 1e-6 and 20 steps, IS is <em>not needed for accuracy</em>, but it is <em>worth keeping as a safety rail</em>. One of two no-IS seeds showed a 27× growth in policy mismatch that the IS runs never showed, and the correction is free: vLLM already returns the log-probs, and both arms run at the same speed. The sync runs share the same 3.6e-4 KL floor, so that floor comes from numerics (fp8 KV cache vs the bf16 trainer), not from lag.</p></div>
+<figure class="figure"><img src="charts/p90_stability.png" alt="KL, entropy, grad norm, staleness per step"/><figcaption class="caption">Figure L4. KL(sampler‖trainer), entropy, gradient norm and staleness per step. The orange solid line is no-IS-s0.</figcaption></figure>
 </section>
 
 <section id="setup">
 <p class="eyebrow">Method</p>
-<h2>Setup</h2>
+<h2>Setup (first study)</h2>
 <div class="table-wrap"><table><tbody>
 <tr><th>Model</th><td><span class="mono">Qwen/Qwen3.5-2B</span>, non-thinking chat template</td></tr>
 <tr><th>Hardware</th><td>1× <span class="mono">ct6e-standard-4t</span> (TPU v6e-4), Flex-start, asia-northeast1-b. Sync and async of each seed ran concurrently on chip pairs 0/1 and 2/3.</td></tr>
@@ -373,7 +437,7 @@ tr:last-child td {
 
 <section id="results">
 <p class="eyebrow">Measurements</p>
-<h2>Results</h2>
+<h2>Results (first study)</h2>
 <h3>Speed and utilization</h3>
 <div class="table-wrap"><table>
 <thead><tr><th>Run</th><th>Wall to 40</th><th>s/step</th><th>Gen tok/s</th><th>Rollout idle</th><th>Learner idle</th></tr></thead>
@@ -396,7 +460,7 @@ tr:last-child td {
 <tr><td>async k=2</td><td>9.38%</td><td>8.96%</td></tr>
 <tr><td>base</td><td colspan="2">7.08%</td></tr>
 </tbody></table></div>
-<p class="footnote">async − sync at step 40: −0.4 pp (95% bootstrap CI over 60 problems: −2.1 to +1.2). Trained − base at step 40: +2.1 pp (−0.2 to +4.5).</p>
+<p class="footnote">async − sync at step 40: −0.4 pp (95% CI −3.9 to +2.9, from a hierarchical bootstrap over problems, seeds and samples; an earlier version resampled only problems and reported −2.1 to +1.2). At step 20: +0.7 pp (−2.8 to +4.7). Trained − base at step 40: +2.1 pp (−0.2 to +4.5).</p>
 <div class="grid-2">
 <figure class="figure"><img src="charts/reward_curves.png" alt="Reward curves"/><figcaption class="caption">Figure 4. Reward vs step and vs wall-clock.</figcaption></figure>
 <figure class="figure"><img src="charts/eval_pass1.png" alt="Eval pass@1"/><figcaption class="caption">Figure 5. Eval pass@1 checkpoints.</figcaption></figure>
@@ -424,6 +488,16 @@ tr:last-child td {
 <section id="caveats">
 <p class="eyebrow">Limits</p>
 <h2>Caveats &amp; cost</h2>
+<p><strong>Longer run:</strong></p>
+<ul>
+<li><strong>Only 20 steps</strong> (budget): the re-price cut 60 to 20 to fit the $90 cap, so the no-IS drift had only 9 steps to develop.</li>
+<li><strong>Weak reward signal.</strong> In the pilot profile, 87% of base samples hit the 6,144 cap; 67–75% of training rollouts were still truncated.</li>
+<li><strong>2 seeds per arm.</strong> The no-IS seeds disagree (14.8% vs 11.1%), so its CIs are wide.</li>
+<li><strong>Spot VMs in different regions</strong> (europe-west4 vs asia-south1). Wall-clock is compared only within a pair. The two sync runs agree to 0.1% across regions.</li>
+<li><strong>Memory fix.</strong> The first p1/p2 attempts OOMed at <span class="mono">--mb-tokens 16384</span>. Both restarted from scratch at 8,192, and only the restarts are reported.</li>
+</ul>
+<p><strong>Longer-run cost: $64.08</strong> of the $90 cap. That is asia-south1-c Spot $35.32 (pilot, p2, p3), europe-west4-a Spot $26.79 (p1, including the wait for the pilot and the OOM restart), early aborted boots $0.98, the GKE fallback cluster $0.97 and a dry run $0.02. Every resource was deleted except the compile-cache bucket.</p>
+<p><strong>First study:</strong></p>
 <ul>
 <li><strong>Short / weak signal.</strong> 40 steps; only ~3.5 of 16 groups per batch carried gradient; ~88% of samples hit the 3,072-token cap in non-thinking mode.</li>
 <li><strong>Unbalanced chips.</strong> 1 rollout + 1 learner leaves ~36% learner idle even in async. A 3:1 split would likely raise the speedup further.</li>
@@ -445,7 +519,7 @@ tr:last-child td {
 </section>
 
 <footer class="footer">
-<p>Engineering study for TPU Builders — not a peer-reviewed paper. Numbers from branch <span class="mono">cursor/qwen38-async-vs-sync-rl-bc4a</span>. A longer follow-up run is underway to tighten the quality claims.</p>
+<p>Engineering study for TPU Builders — not a peer-reviewed paper. Numbers from branch <span class="mono">cursor/qwen38-async-vs-sync-rl-bc4a</span>. Longer-run data and analysis: <span class="mono">rl/results/plan90/</span>, <span class="mono">qrl/report_plan90.py</span>.</p>
 </footer>
 </main>
 </body>
