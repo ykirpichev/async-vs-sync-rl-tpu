@@ -329,7 +329,7 @@ tr:last-child td {
 </head>
 <body>
 <nav class="nav" aria-label="Sections"><div class="nav-inner">
-<a href="#tldr">TLDR</a><a href="#longer">Longer run</a><a href="#nois">No-IS ablation</a><a href="#setup">First study</a><a href="#results">Results</a><a href="#related">Related work</a><a href="#caveats">Caveats</a><a href="#refs">References</a>
+<a href="#tldr">TLDR</a><a href="#longer">Longer run</a><a href="#nois">No-IS ablation</a><a href="#lag1">Lag 1</a><a href="#setup">First study</a><a href="#results">Results</a><a href="#related">Related work</a><a href="#caveats">Caveats</a><a href="#refs">References</a>
 </div></nav>
 <main class="shell">
 <header>
@@ -340,7 +340,8 @@ tr:last-child td {
 <span class="pill">Qwen3.5-2B · GRPO · AIME</span>
 <span class="pill">Longer run: Spot v6e-4 · 3 arms × 2 seeds · 20 steps · 6k cap</span>
 <span class="pill">First study: Flex-start v6e-4 · 40 steps · 3k cap</span>
-<span class="pill">≈ $64 + $22</span>
+<span class="pill">Lag 1 follow-up: Flex v6e-4 · k=1 ± IS × 2 seeds</span>
+<span class="pill">≈ $64 + $21 + $22</span>
 </div>
 </header>
 
@@ -356,6 +357,7 @@ tr:last-child td {
 <div class="callout" style="margin-top:1.2rem">
 <p style="margin-top:0"><strong>Longer run (6,144-token cap, 3 arms × 2 seeds, 20 steps).</strong> Step-20 pass@1 on 136 problems (AIME 2024–2026, BRUMO 2025, HMMT 2025–2026) × 16 samples, with 95% bootstrap CIs over problems × seeds × samples: sync <strong>11.49%</strong> [7.93, 15.51], async k=2 + IS <strong>12.41%</strong> [8.57, 16.52], async k=2 without IS <strong>12.98%</strong> [8.46, 18.34]. The base model scored 9.47%. In the matched pair on one VM, async took 64.5 min for 20 steps versus 119.9 min for sync. The learner is now the bottleneck: rollout idle fell from 56% to 20–26% and learner idle from 44% to 4–5%.</p>
 <p><strong>Do we need IS?</strong> Not for accuracy at lag 2 over 20 steps. But one of the two no-IS seeds began drifting off-policy from step 11: its sampler-vs-trainer KL grew 27× and its max IS ratio reached 26.6, while both IS seeds stayed flat. The correction is free, so keep it.</p>
+<p><strong>Lag 1 is enough.</strong> With the learner as the bottleneck, async k=1 runs as fast as k=2 (204–211 s/step, inside the k=2 spread) at lag 1 on 19 of 20 steps. Step-20 pass@1: k=1 + IS <strong>12.80%</strong> [8.66, 17.58], k=1 without IS <strong>14.50%</strong> [9.74, 19.90]. k1-IS − k2-IS = +0.4 pp [−2.4, +3.2], equivalent at ±3 pp. k=1 <em>delays</em> the no-IS drift (KL 1.5e-3 at step 20 vs 8.1e-3 at k=2) but does not stop it. Run k=1 and keep IS. Cost $21.45 of a $25 cap.</p>
 <p style="margin-bottom:0"><strong>First study (3,072-token cap, 40 steps).</strong> 1.61× faster; async − sync at step 40 was −0.4 pp (95% CI −3.9 to +2.9). <strong>Caveats:</strong> both studies are short. In the longer run, 87% of base samples hit the cap in the pilot, there were only 2 seeds per arm, and the Spot VMs were in different regions, so wall-clock is compared only within a VM pair. Spend was $64.08 of a $90 cap.</p>
 </div>
 </section>
@@ -420,6 +422,63 @@ tr:last-child td {
 <p>no-IS-s0 tracked the other runs for 10 steps. From step 11 its mismatch rose on almost every step, to 27× its starting level, and its gradient norm passed the 1.0 clip on 3 of the last 5 steps. It also had the highest train reward and the best pass@1 (14.8%), so 20 steps cannot tell faster learning apart from the start of an instability. Both IS-corrected seeds stayed at 3.5–6.2e-4 throughout.</p>
 <div class="callout"><p style="margin:0"><strong>Verdict.</strong> At lag 2, lr 1e-6 and 20 steps, IS is <em>not needed for accuracy</em>, but it is <em>worth keeping as a safety rail</em>. One of two no-IS seeds showed a 27× growth in policy mismatch that the IS runs never showed, and the correction is free: vLLM already returns the log-probs, and both arms run at the same speed. The sync runs share the same 3.6e-4 KL floor, so that floor comes from numerics (fp8 KV cache vs the bf16 trainer), not from lag.</p></div>
 <figure class="figure"><img src="charts/p90_stability.png" alt="KL, entropy, grad norm, staleness per step"/><figcaption class="caption">Figure L4. KL(sampler‖trainer), entropy, gradient norm and staleness per step. The orange solid line is no-IS-s0.</figcaption></figure>
+</section>
+
+<section id="lag1">
+<p class="eyebrow">Follow-up</p>
+<h2>Lag 1 (k=1)</h2>
+<p>The longer run pinned staleness at 2 because the learner was the bottleneck. This follow-up asks two questions. Does a lag of 1 give the same speed with less staleness? And does it stop the no-IS drift? Two arms, async k=1 + IS and async k=1 without IS, ran with 2 seeds each (pA = seed 0, then pB = seed 1) on one v6e-4 <strong>Flex-start</strong> VM in europe-west4-a ($5.40/h). Everything else matched the longer run: 20 steps, the 6,144-token cap, the same prompt filter, lr, batch and learner flags, and the same 136-problem × 16-sample eval. A CPU test confirmed the flags give exactly lag 1, and every k=1 run trained at lag 1 on 19 of 20 steps.</p>
+<h3>Speed: k=1 is as fast as k=2</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Arm</th><th>s/step, mean (seeds)</th><th>Versions behind</th><th>VMs</th></tr></thead>
+<tbody>
+<tr><td>sync</td><td>359.7 (359.6, 360.0)</td><td>0</td><td>plan90 Spot, ew4a + as1c</td></tr>
+<tr><td>async k=2 + IS</td><td>205.8 (193.5, 218.2)</td><td>2 on 18 of 20 steps</td><td>plan90 Spot, ew4a + as1c</td></tr>
+<tr><td>async k=2, no IS</td><td>198.5 (196.8, 200.3)</td><td>2 on 18 of 20 steps</td><td>plan90 Spot, as1c</td></tr>
+<tr><td><strong>async k=1 + IS</strong></td><td>208.5 (210.0, 207.1)</td><td>1 on 19 of 20 steps</td><td>Flex x2-ew4a</td></tr>
+<tr><td><strong>async k=1, no IS</strong></td><td>207.4 (204.0, 210.7)</td><td>1 on 19 of 20 steps</td><td>Flex x2-ew4a</td></tr>
+</tbody></table></div>
+<p>Training a batch (187–194 s) takes longer than generating one (154–158 s). With a lag of 1, the rollout engine already finishes batch b+1 while the learner is still on batch b, so a second version of lag only adds headroom it cannot use. All four k=1 runs took 68–70 min for 20 steps. Rollout idle was 23–26% and learner idle 6–7% (4–5% at k=2). Against sync that is about 1.73×, but the k=1 pairs had no sync partner on their VM, so this compares across VMs.</p>
+<figure class="figure"><img src="charts/k1_lag_kl.png" alt="Policy versions behind and KL per step for all arms"/><figcaption class="caption">Figure K1. Left: policy versions behind per step (sync 0, k=1 at 1, k=2 at 2). Middle: KL(sampler‖trainer) for the no-IS arms; red is k=1, orange is k=2. Right: the IS arms and sync.</figcaption></figure>
+<div class="grid-2">
+<figure class="figure"><img src="charts/k1_speed_idle.png" alt="Seconds per step and idle fractions for all ten runs"/><figcaption class="caption">Figure K2. Seconds per step and idle fractions for all ten runs, by VM pair.</figcaption></figure>
+<figure class="figure"><img src="charts/k1_reward_wallclock.png" alt="Train reward vs step and wall-clock, all arms"/><figcaption class="caption">Figure K3. Train reward vs step and vs wall-clock; wall-clock to N steps.</figcaption></figure>
+</div>
+<h3>Quality: step-20 pass@1</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Arm</th><th>pass@1 (95% CI)</th><th>Seeds (s0, s1)</th><th>Gain over base (9.47%)</th></tr></thead>
+<tbody>
+<tr><td>sync</td><td>11.49% [7.93, 15.51]</td><td>11.72%, 11.26%</td><td>+2.0 pp [+0.2, +4.0]</td></tr>
+<tr><td>async k=2 + IS</td><td>12.41% [8.57, 16.52]</td><td>12.96%, 11.86%</td><td>+2.9 pp [+0.7, +5.1]</td></tr>
+<tr><td>async k=2, no IS</td><td>12.98% [8.46, 18.34]</td><td>14.84%, 11.12%</td><td>+3.5 pp [+0.4, +7.2]</td></tr>
+<tr><td><strong>async k=1 + IS</strong></td><td><strong>12.80% [8.66, 17.58]</strong></td><td>14.25%, 11.35%</td><td>+3.3 pp [+0.3, +6.5]</td></tr>
+<tr><td><strong>async k=1, no IS</strong></td><td><strong>14.50% [9.74, 19.90]</strong></td><td>16.36%, 12.64%</td><td>+5.0 pp [+1.7, +8.6]</td></tr>
+</tbody></table></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Contrast (paired by problem)</th><th>Difference</th><th>95% CI</th><th>90% CI</th><th>Equivalent at ±3 pp?</th></tr></thead>
+<tbody>
+<tr><td>k1-IS − sync</td><td>+1.3 pp</td><td>[−1.4, +4.2]</td><td>[−1.0, +3.7]</td><td>no (too wide)</td></tr>
+<tr><td>k1-IS − k2-IS</td><td>+0.4 pp</td><td>[−2.4, +3.2]</td><td>[−2.0, +2.8]</td><td><strong>yes</strong></td></tr>
+<tr><td>k1-noIS − k1-IS</td><td>+1.7 pp</td><td>[−2.0, +5.5]</td><td>[−1.4, +4.9]</td><td>no (too wide)</td></tr>
+<tr><td>k1-noIS − k2-noIS</td><td>+1.5 pp</td><td>[−2.8, +5.7]</td><td>[−2.1, +5.0]</td><td>no (too wide)</td></tr>
+</tbody></table></div>
+<p class="footnote">Same hierarchical bootstrap (problems × seeds × samples) and ±3 pp TOST as the longer run. In every arm seed 0 beat seed 1, by 0.5–3.7 pp, which is as large as any arm difference.</p>
+<figure class="figure"><img src="charts/k1_pass1.png" alt="Step-20 pass@1 for all five arms and paired differences"/><figcaption class="caption">Figure K4. Step-20 pass@1 for all five arms (dots = seeds) and paired differences with 95% CIs.</figcaption></figure>
+<h3>Does k=1 stop the no-IS drift?</h3>
+<p><strong>It delays and shrinks the drift, but does not stop it.</strong> At k=2, no-IS-s0 began rising at step 11 and reached 8.1e-3 by step 20. At k=1 the same seed stayed at 4.3–4.7e-4 through step 16, then rose on each of the last four steps: 6.2e-4, 6.6e-4, 8.6e-4 and 1.5e-3. That is about where the k=2 run had been at step 14.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Run</th><th>KL steps 1–5</th><th>KL steps 16–20</th><th>Max KL (step)</th><th>Max IS ratio</th><th>Grad norm mean (max)</th></tr></thead>
+<tbody>
+<tr><td>no-IS-s0, k=2</td><td>3.9e-4</td><td>7.4e-3</td><td>1.1e-2 (19)</td><td>26.6</td><td>0.77 (1.27)</td></tr>
+<tr><td><strong>k1-noIS-s0</strong></td><td>3.8e-4</td><td><strong>8.1e-4</strong></td><td><strong>1.5e-3 (20)</strong></td><td>3.33</td><td>0.67 (0.91)</td></tr>
+<tr><td>k1-noIS-s1</td><td>3.6e-4</td><td>3.6e-4</td><td>4.5e-4 (15)</td><td>1.88</td><td>0.63 (0.84)</td></tr>
+<tr><td>async-IS-s0, k=2</td><td>3.9e-4</td><td>5.2e-4</td><td>6.2e-4 (17)</td><td>3.06</td><td>0.66</td></tr>
+<tr><td>k1-IS-s0</td><td>3.9e-4</td><td>6.6e-4</td><td>8.2e-4 (20)</td><td>3.02</td><td>0.63 (0.89)</td></tr>
+<tr><td>k1-IS-s1</td><td>3.7e-4</td><td>3.8e-4</td><td>4.2e-4 (11)</td><td>1.99</td><td>0.62 (0.75)</td></tr>
+</tbody></table></div>
+<p>The drift shows up in the same seed at both lags. At k=1 even the IS-corrected seed-0 run rose late, to 8.2e-4, while seed 1 stayed flat in all four async runs. Seed 0's prompt order pushes every async run off-policy late in training: the lag sets how fast, and IS keeps it in check. At k=1 no-IS, the max IS ratio stayed at 3.3 (26.6 at k=2), and the gradient norm never reached the 1.0 clip. 20 steps cannot show whether it would have run away.</p>
+<div class="callout"><p style="margin:0"><strong>Verdict.</strong> When the learner is the bottleneck, <em>use k=1</em>. It matches k=2's throughput at equivalent accuracy with half the staleness, and it delays the no-IS drift by about 6 steps. It does not make IS unnecessary, because the same seed still drifted, only later. Keep behaviour log-probs and truncated IS.</p></div>
+<figure class="figure"><img src="charts/k1_stability.png" alt="KL, entropy, grad norm, staleness per step, all ten runs"/><figcaption class="caption">Figure K5. KL(sampler‖trainer), entropy, gradient norm and staleness per step for all ten runs.</figcaption></figure>
 </section>
 
 <section id="setup">
@@ -497,6 +556,12 @@ tr:last-child td {
 <li><strong>Memory fix.</strong> The first p1/p2 attempts OOMed at <span class="mono">--mb-tokens 16384</span>. Both restarted from scratch at 8,192, and only the restarts are reported.</li>
 </ul>
 <p><strong>Longer-run cost: $64.08</strong> of the $90 cap. That is asia-south1-c Spot $35.32 (pilot, p2, p3), europe-west4-a Spot $26.79 (p1, including the wait for the pilot and the OOM restart), early aborted boots $0.98, the GKE fallback cluster $0.97 and a dry run $0.02. Every resource was deleted except the compile-cache bucket.</p>
+<p><strong>Lag 1 follow-up:</strong></p>
+<ul>
+<li><strong>Different VM and day.</strong> All k=1 runs used one Flex VM in europe-west4-a; sync and k=2 ran on Spot VMs the day before. k=1 vs sync speed therefore compares across VMs.</li>
+<li><strong>2 seeds, 20 steps.</strong> The k=1 no-IS drift began at step 17, so it had only 4 steps to show. Seed differences (0.5–3.7 pp) are as large as any arm difference.</li>
+</ul>
+<p><strong>Lag 1 cost: $21.45</strong> of a $25 cap (ledger; $21.33 from create-to-delete times). That is Flex europe-west4-a for 3.89 h ($21.03) plus a Spot VM the guard deleted after 2.8 minutes ($0.29). Everything was deleted except the compile-cache bucket.</p>
 <p><strong>First study:</strong></p>
 <ul>
 <li><strong>Short / weak signal.</strong> 40 steps; only ~3.5 of 16 groups per batch carried gradient; ~88% of samples hit the 3,072-token cap in non-thinking mode.</li>
