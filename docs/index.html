@@ -329,7 +329,7 @@ tr:last-child td {
 </head>
 <body>
 <nav class="nav" aria-label="Sections"><div class="nav-inner">
-<a href="#tldr">TLDR</a><a href="#longer">Longer run</a><a href="#nois">No-IS ablation</a><a href="#lag1">Lag 1</a><a href="#setup">First study</a><a href="#results">Results</a><a href="#related">Related work</a><a href="#caveats">Caveats</a><a href="#refs">References</a>
+<a href="#tldr">TLDR</a><a href="#longer">Longer run</a><a href="#nois">No-IS ablation</a><a href="#lag1">Lag 1</a><a href="#long">60-step run</a><a href="#setup">First study</a><a href="#results">Results</a><a href="#related">Related work</a><a href="#caveats">Caveats</a><a href="#refs">References</a>
 </div></nav>
 <main class="shell">
 <header>
@@ -341,7 +341,8 @@ tr:last-child td {
 <span class="pill">Longer run: Spot v6e-4 · 3 arms × 2 seeds · 20 steps · 6k cap</span>
 <span class="pill">First study: Flex-start v6e-4 · 40 steps · 3k cap</span>
 <span class="pill">Lag 1 follow-up: Flex v6e-4 · k=1 ± IS × 2 seeds</span>
-<span class="pill">≈ $64 + $21 + $22</span>
+<span class="pill">Long run: k=1 ± IS × 2 seeds · 60 steps</span>
+<span class="pill">≈ $64 + $21 + $55 + $22</span>
 </div>
 </header>
 
@@ -352,12 +353,13 @@ tr:last-child td {
 <div class="kpi"><div class="label">Speedup (6k cap)</div><div class="value">1.86×</div><div class="detail">193.5 vs 359.6 s/step, same VM</div></div>
 <div class="kpi"><div class="label">async-IS − sync</div><div class="value">+0.9 pp</div><div class="detail">95% CI −1.0 to +2.9; equivalent at ±3 pp</div></div>
 <div class="kpi"><div class="label">no-IS − async-IS</div><div class="value">+0.6 pp</div><div class="detail">CI −2.6 to +4.0; 1 of 2 seeds drifted</div></div>
-<div class="kpi"><div class="label">Speedup (3k cap)</div><div class="value">1.61×</div><div class="detail">first study, 40 steps</div></div>
+<div class="kpi"><div class="label">no-IS − IS, step 60</div><div class="value">−4.9 pp</div><div class="detail">95% CI −9.2 to −1.0; k=1, 60 steps</div></div>
 </div>
 <div class="callout" style="margin-top:1.2rem">
 <p style="margin-top:0"><strong>Longer run (6,144-token cap, 3 arms × 2 seeds, 20 steps).</strong> Step-20 pass@1 on 136 problems (AIME 2024–2026, BRUMO 2025, HMMT 2025–2026) × 16 samples, with 95% bootstrap CIs over problems × seeds × samples: sync <strong>11.49%</strong> [7.93, 15.51], async k=2 + IS <strong>12.41%</strong> [8.57, 16.52], async k=2 without IS <strong>12.98%</strong> [8.46, 18.34]. The base model scored 9.47%. In the matched pair on one VM, async took 64.5 min for 20 steps versus 119.9 min for sync. The learner is now the bottleneck: rollout idle fell from 56% to 20–26% and learner idle from 44% to 4–5%.</p>
 <p><strong>Do we need IS?</strong> Not for accuracy at lag 2 over 20 steps. But one of the two no-IS seeds began drifting off-policy from step 11: its sampler-vs-trainer KL grew 27× and its max IS ratio reached 26.6, while both IS seeds stayed flat. The correction is free, so keep it.</p>
 <p><strong>Lag 1 is enough.</strong> With the learner as the bottleneck, async k=1 runs as fast as k=2 (204–211 s/step, inside the k=2 spread) at lag 1 on 19 of 20 steps. Step-20 pass@1: k=1 + IS <strong>12.80%</strong> [8.66, 17.58], k=1 without IS <strong>14.50%</strong> [9.74, 19.90]. k1-IS − k2-IS = +0.4 pp [−2.4, +3.2], equivalent at ±3 pp. k=1 <em>delays</em> the no-IS drift (KL 1.5e-3 at step 20 vs 8.1e-3 at k=2) but does not stop it. Run k=1 and keep IS. Cost $21.45 of a $25 cap.</p>
+<p><strong>60 steps at k=1: no blow-up without IS, but it stops improving.</strong> Both no-IS seeds had one KL excursion at steps 32–40 (peaks 4.6e-3 and 1.8e-3, max IS ratio 11.8 and 12.4). Both recovered within about 5 steps, with only 3 gradient-clip hits in 120 steps, and train reward kept rising. pass@1 at steps 20 / 40 / 60: k=1 + IS <strong>13.5% / 16.7% / 20.2%</strong>, no IS <strong>11.5% / 16.2% / 15.4%</strong>. no-IS − IS was −0.5 pp at step 40 (equivalent at ±3 pp) and <strong>−4.9 pp [−9.2, −1.0] at step 60</strong>. The IS arm kept learning (+10.8 pp over base); the no-IS arm plateaued after step 40. Keep truncated IS. Cost $54.91 of a $65 cap.</p>
 <p style="margin-bottom:0"><strong>First study (3,072-token cap, 40 steps).</strong> 1.61× faster; async − sync at step 40 was −0.4 pp (95% CI −3.9 to +2.9). <strong>Caveats:</strong> both studies are short. In the longer run, 87% of base samples hit the cap in the pilot, there were only 2 seeds per arm, and the Spot VMs were in different regions, so wall-clock is compared only within a VM pair. Spend was $64.08 of a $90 cap.</p>
 </div>
 </section>
@@ -481,6 +483,46 @@ tr:last-child td {
 <figure class="figure"><img src="charts/k1_stability.png" alt="KL, entropy, grad norm, staleness per step, all ten runs"/><figcaption class="caption">Figure K5. KL(sampler‖trainer), entropy, gradient norm and staleness per step for all ten runs.</figcaption></figure>
 </section>
 
+<section id="long">
+<p class="eyebrow">Follow-up</p>
+<h2>Long run: 60 steps at k=1, IS vs no IS</h2>
+<p>Does the no-IS drift turn into instability, or does the run keep learning? The two k=1 arms ran for 60 steps with 2 seeds each (pA = seed 0, then pB = seed 1) on one v6e-4 <strong>Flex-start</strong> VM in europe-west4-a ($5.40/h). Checkpoints were evaluated at steps 20, 40 and 60. Everything else matched the 20-step k=1 runs: the 6,144-token cap, prompt filter, constant lr 1e-6, batch 16 × 8, learner flags and the 136-problem × 16-sample eval. Every run trained at lag 1 on 59 of 60 steps.</p>
+<div class="callout"><p style="margin:0"><strong>Answer.</strong> The no-IS drift did <em>not</em> run away. Both no-IS seeds had one KL excursion in the same window (steps 32–40), recovered within about 5 steps, and kept raising their train reward. But on the eval the no-IS arm stopped improving after step 40, while the IS arm kept improving. By step 60, no-IS − IS was <strong>−4.9 pp [−9.2, −1.0]</strong>, with both seeds negative (−8.4 and −1.4 pp).</p></div>
+<h3>Stability diagnostics</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Run</th><th>KL 1–10</th><th>21–40</th><th>41–60</th><th>Max KL (step)</th><th>KL at 60</th><th>Max IS ratio (step)</th><th>Clip hits / 60</th><th>Max grad norm</th><th>Entropy 1–10 → 41–60</th><th>Train reward 1–10 → 41–60</th></tr></thead>
+<tbody>
+<tr><td>k1-IS-s0</td><td>3.8e-4</td><td>3.9e-4</td><td>4.7e-4</td><td>5.7e-4 (44)</td><td>5.2e-4</td><td>2.85 (4)</td><td>0</td><td>0.96</td><td>0.361 → 0.382</td><td>0.252 → 0.499</td></tr>
+<tr><td>k1-IS-s1</td><td>3.7e-4</td><td>3.4e-4</td><td>3.6e-4</td><td>4.2e-4 (46)</td><td>3.6e-4</td><td>6.80 (59)</td><td>0</td><td>0.82</td><td>0.351 → 0.256</td><td>0.216 → 0.416</td></tr>
+<tr><td><strong>k1-noIS-s0</strong></td><td>3.8e-4</td><td><strong>1.0e-3</strong></td><td>5.1e-4</td><td><strong>4.6e-3 (37)</strong></td><td>8.6e-4</td><td><strong>11.8 (37)</strong></td><td><strong>2</strong> (36, 37)</td><td><strong>1.31</strong></td><td>0.358 → 0.282</td><td>0.234 → 0.432</td></tr>
+<tr><td><strong>k1-noIS-s1</strong></td><td>3.7e-4</td><td><strong>7.1e-4</strong></td><td>3.6e-4</td><td><strong>1.8e-3 (35)</strong></td><td>3.3e-4</td><td><strong>12.4 (40)</strong></td><td><strong>1</strong> (48)</td><td><strong>1.05</strong></td><td>0.353 → 0.291</td><td>0.235 → 0.449</td></tr>
+</tbody></table></div>
+<p>Over steps 30–42, no-IS seed 0's KL went 4.3e-4 → 1.5e-3 → 4.6e-3 (step 37) → 1.3e-3 → 5.0e-4. Seed 1 went 4.0e-4 → 1.8e-3 (step 35) → 3.7e-4 (step 41). The k=2 no-IS seed in the longer run rose to 1.1e-2 (max ratio 26.6) and had not turned back by step 20; at k=1 the peaks were 2.4–6× lower and both turned back. The IS seeds stayed at 2.9–5.7e-4 throughout and never hit the clip. Both excursions came while training-rollout truncation was falling through about 50%, the phase when answer lengths changed fastest. Over its last 8 steps no-IS seed 0's KL was climbing again, from 3.9e-4 to 8.6e-4. For the no-IS runs, the IS ratio is a diagnostic only: it is computed but not applied.</p>
+<figure class="figure"><img src="charts/long_kl_ratio_grad.png" alt="KL, max IS ratio and grad norm per step over 60 steps"/><figcaption class="caption">Figure X1. KL(sampler‖trainer), max IS ratio and pre-clip gradient norm per step (dotted: clip at 1.0). Red = no IS, blue = IS; solid = seed 0, dashed = seed 1.</figcaption></figure>
+<figure class="figure"><img src="charts/long_reward_entropy_lag.png" alt="Train reward, entropy, trained tokens, lag per step"/><figcaption class="caption">Figure X2. Train reward (5-step smoothed), policy entropy, trained tokens per step, and policy versions behind.</figcaption></figure>
+<h3>pass@1 at steps 20, 40 and 60</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Arm</th><th>Step 20</th><th>Step 40</th><th>Step 60</th></tr></thead>
+<tbody>
+<tr><td>k=1 + IS</td><td>13.51% [9.44, 18.29]<br/><span class="footnote">seeds 14.11, 12.91 · +4.0 pp over base</span></td><td>16.70% [12.04, 21.76]<br/><span class="footnote">17.83, 15.58 · +7.2 pp</span></td><td><strong>20.24% [14.82, 26.29]</strong><br/><span class="footnote">21.88, 18.61 · +10.8 pp [+7.2, +14.9]</span></td></tr>
+<tr><td>k=1, no IS</td><td>11.47% [7.88, 15.26]<br/><span class="footnote">11.03, 11.90 · +2.0 pp</span></td><td>16.22% [11.60, 21.21]<br/><span class="footnote">15.99, 16.45 · +6.8 pp</span></td><td>15.35% [10.29, 21.05]<br/><span class="footnote">13.51, 17.19 · +5.9 pp [+2.3, +9.5]</span></td></tr>
+<tr><td><strong>no IS − IS</strong></td><td>−2.0 pp [−4.0, −0.2]</td><td>−0.5 pp [−3.1, +2.1], <strong>equivalent at ±3 pp</strong></td><td><strong>−4.9 pp [−9.2, −1.0]</strong></td></tr>
+</tbody></table></div>
+<p>The base model scores 9.47%. Answer length moved too. By step 60, no-IS seed 0's eval answers averaged 2,601 tokens with 14% truncated, against 5,258 tokens and 73% at step 40, and its pass@1 fell from 16.0% to 13.5%. IS seed 0 also shortened (4,492 tokens, 19% truncated) but gained accuracy (17.8% to 21.9%). The seed-1 runs kept long answers (62–71% truncated).</p>
+<figure class="figure"><img src="charts/long_pass1.png" alt="pass@1 at 0/20/40/60 and paired differences"/><figcaption class="caption">Figure X3. pass@1 vs step (95% CI; x = seeds) and paired no-IS − IS differences at each eval step.</figcaption></figure>
+<h3>Replication and speed</h3>
+<p>Step 20 here repeats the 20-step k=1 runs: same config, same seeds, constant lr. The first three steps' KL values were bit-identical, and then the runs diverged, because vLLM on TorchTPU seeds sampling per engine, not per request. The IS arm replicated (+0.7 pp [−2.1, +3.6]). The no-IS arm did not (−3.0 pp [−6.3, 0.0]): its seed 0 scored 16.4% in one run and 11.0% in the other. The drift timing did not replicate either. In the 20-step run no-IS seed 0 began drifting at step 17, here at step 31, and seed 1, which had stayed flat for 20 steps, drifted here too. Drift is not a fixed property of a seed's prompt order.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Arm</th><th>s/step over 60, mean (seeds)</th><th>Steps 1–10</th><th>11–20</th><th>21–40</th><th>41–60</th><th>Rollout idle</th><th>Learner idle</th></tr></thead>
+<tbody>
+<tr><td>k=1 + IS</td><td>186.6 (181.8, 191.5)</td><td>236–239</td><td>184–193</td><td>174–184</td><td>160–175</td><td>20.0%</td><td>3.8%</td></tr>
+<tr><td>k=1, no IS</td><td>178.8 (173.8, 183.8)</td><td>245–249</td><td>173–183</td><td>164–181</td><td>149–154</td><td>18.6%</td><td>4.6%</td></tr>
+</tbody></table></div>
+<p>Steps get faster as answers get shorter. The no-IS runs were about 4% faster within each pair because they trained fewer tokens per step late in the run; IS itself adds no compute. Over the first 20 steps these runs averaged about 210 s/step, matching the 20-step k=1 runs.</p>
+<figure class="figure"><img src="charts/long_speed.png" alt="Seconds per step and wall-clock to N steps"/><figcaption class="caption">Figure X4. Seconds per step and wall-clock to N steps, all four runs on one VM.</figcaption></figure>
+<div class="callout"><p style="margin:0"><strong>Verdict.</strong> <em>Keep truncated IS at k=1.</em> Without it, the drift is episodic and self-limiting rather than explosive. Still, the uncorrected arm stopped improving after step 40 and ended 4.9 pp behind, with one seed halving its answer length and drifting again at the end. With IS, the gain over base grew from +4.0 to +10.8 pp at a flat KL, at no cost in speed. The 20-step "no-IS matches IS" result was an early-training result.</p></div>
+</section>
+
 <section id="setup">
 <p class="eyebrow">Method</p>
 <h2>Setup (first study)</h2>
@@ -562,6 +604,13 @@ tr:last-child td {
 <li><strong>2 seeds, 20 steps.</strong> The k=1 no-IS drift began at step 17, so it had only 4 steps to show. Seed differences (0.5–3.7 pp) are as large as any arm difference.</li>
 </ul>
 <p><strong>Lag 1 cost: $21.45</strong> of a $25 cap (ledger; $21.33 from create-to-delete times). That is Flex europe-west4-a for 3.89 h ($21.03) plus a Spot VM the guard deleted after 2.8 minutes ($0.29). Everything was deleted except the compile-cache bucket.</p>
+<p><strong>60-step run:</strong></p>
+<ul>
+<li><strong>2 seeds, and run-to-run noise is larger than the bootstrap assumes.</strong> The same no-IS seed scored 16.4% and 11.0% at step 20 in two runs with identical inputs. The step-60 contrast has the same sign in both seeds, but read it as strong evidence, not a precise effect size.</li>
+<li><strong>60 steps is still short.</strong> IS was still improving at step 60, and no-IS seed 0's KL was rising again at the end.</li>
+<li><strong>Length is a confounder.</strong> 84% of base answers hit the 6,144-token cap. Shorter answers raised accuracy in one seed and lowered it in another.</li>
+</ul>
+<p><strong>60-step cost: $54.91</strong> of a $65 cap (ledger; $54.89 from create-to-delete times, 10.16 h of Flex europe-west4-a at $5.40/h). That covers setup ≈ $0.9, pA ≈ $25.6 (4.73 h) and pB ≈ $27.7 (5.13 h), including three evals per run. Capacity waits and the cancelled Flex requests cost $0. Everything was deleted except the compile-cache bucket.</p>
 <p><strong>First study:</strong></p>
 <ul>
 <li><strong>Short / weak signal.</strong> 40 steps; only ~3.5 of 16 groups per batch carried gradient; ~88% of samples hit the 3,072-token cap in non-thinking mode.</li>
