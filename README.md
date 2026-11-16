@@ -1,27 +1,19 @@
-# Async vs sync RL rollouts on TPU v6e
+# Async vs sync RL on TPU v6e
 
-Engineering study: **GRPO on Qwen3.5-2B / AIME** comparing synchronous and asynchronous (staleness ≤ 2) rollouts on a Flex-start TPU v6e-4 with TorchTPU + vLLM.
+Async vs sync RL fine-tuning of Qwen3.5-2B on AIME math problems, on Google TPU v6e with TorchTPU + vLLM.
 
 **Live page:** https://ykirpichev.github.io/async-vs-sync-rl-tpu/
 
-## TLDR
+## TL;DR
 
-| | Sync | Async k=2 |
-|---|---|---|
-| Wall-clock to 40 steps | 85.4 min | **53.0 min (1.61×)** |
-| Rollout idle | 39.5% | **1.7%** |
-| Gen tokens/s | 2,902 | 4,698 |
-| pass@1 @ step 40 | 9.38% | 8.96% (within noise) |
+- Async at lag 1 is about 1.7× faster than sync (204–211 vs 359.7 s/step), with no detectable accuracy difference.
+- Lag 1 is as fast as lag 2, because the learner is the bottleneck; a second version of lag buys nothing.
+- Over 60 steps, truncated importance sampling (IS) reaches 20.2% pass@1 vs 15.4% without it. Keep truncated IS.
+- Without IS there was no collapse, but the arm stopped improving after step 40.
+- Total cost about $162.5 over four rounds ($22.1 + $64.08 + $21.45 + $54.91).
 
-Base pass@1: 7.08%. Cost ≈ **$22**. This is a short, weak-signal run: the speed result is solid; "equal quality" means no detectable gap at this scale.
+## Layout
 
-## Related work (citations)
+The site is the static page `docs/index.html` with charts in `docs/charts/`, served by GitHub Pages from `main` `/docs`.
 
-1. **Miles** — Yuan, Yueming. "Miles: RL post-training for the new era of scale and workloads." *PyTorch Conference 2026*. [Slides](https://cdn.sessionize.com/download/idgayrey~KCRhB3suN75AnPeiMM36R3.pdf~miles_pytorchconf_2026.pdf) · [Blog](https://pytorch.org/blog/miles-a-pytorch-native-stack-for-large-scale-llm-rl-post-training/)
-2. **TorchStore / AsyncRL** — Pasqualin et al. "TorchStore: What We Learned Building Distributed Storage Solutions for AsyncRL." *PyTorch Conference Europe 2026*. [Session](https://pytorchconferenceeu2026.sched.com/event/2HioY/torchstore-what-we-learned-building-distributed-storage-solutions-for-aysncrl-lucas-pasqualin-danielle-pintz-allen-wang-amir-afzail-meta) · [GitHub](https://github.com/meta-pytorch/torchstore)
-3. **torchforge** — PyTorch Blog, 23 Oct 2025. [Post](https://pytorch.org/blog/introducing-torchforge/)
-4. **HF AsyncGRPO** — `AsyncGRPOTrainer` in [huggingface/trl](https://github.com/huggingface/trl); agentic RL sessions at PyTorch Conf NA 2026.
-
-## Reproduce
-
-Code on branch `cursor/qwen38-async-vs-sync-rl-bc4a` under `rl/`.
+Code and raw results are on branch `cursor/qwen38-async-vs-sync-rl-bc4a` under `rl/`.
